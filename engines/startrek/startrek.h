@@ -752,6 +752,18 @@ public:
 	uint32 _frameIndex;
 	uint32 _roomFrameCounter; // Resets to 0 on loading a room
 
+	// Unattended test harness, driven by "autotest_*" config keys (see startrek.cpp).
+	// _autotestTicks is -1 when the harness is disabled.
+	int32 _autotestTicks;
+	uint32 _autotestStartTick;
+	uint32 _autotestLastDismissTick;
+	int32 _autotestDismissEvery;
+	Common::Path _autotestScreenshot;
+
+	int setupAutotest(); // Returns the game mode to start in, or -1 if disabled
+	void runAutotestTick();
+	void finishAutotest(const char *reason);
+
 	bool _musicEnabled;
 	bool _sfxEnabled;
 	uint16 _word_467a6;
