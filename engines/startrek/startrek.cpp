@@ -30,8 +30,10 @@
 #include "common/file.h"
 #include "common/macresman.h"
 
+#include "graphics/paletteman.h"
 #include "graphics/pixelformat.h"
 #include "graphics/surface.h"
+#include "image/png.h"
 
 #include "engines/util.h"
 #include "video/qt_decoder.h"
@@ -93,6 +95,11 @@ StarTrekEngine::StarTrekEngine(OSystem *syst, const StarTrekGameDescription *gam
 	_roomIndexToLoad = 0;
 	_mapFile = nullptr;
 	_iwFile = nullptr;
+
+	_autotestTicks = -1;
+	_autotestStartTick = 0;
+	_autotestLastDismissTick = 0;
+	_autotestDismissEvery = 0;
 
 	_showSubtitles = true;
 	Common::fill(_r3List, _r3List + NUM_SPACE_OBJECTS, (R3 *)nullptr);
@@ -164,7 +171,11 @@ Common::Error StarTrekEngine::run() {
 		loadedSave = true;
 	}
 
-	if (!loadedSave) {
+	int autotestMode = loadedSave ? -1 : setupAutotest();
+
+	if (autotestMode != -1) {
+		runGameMode(autotestMode, false);
+	} else if (!loadedSave) {
 		if (isCd || !isDemo) {
 			playIntro();
 			_missionToLoad = "DEMON";
@@ -182,6 +193,86 @@ Common::Error StarTrekEngine::run() {
 	}
 
 	return Common::kNoError;
+}
+
+/**
+ * Unattended test harness. Enabled by adding keys to the game's config section:
+ *   autotest_room       = MISSION:INDEX   Skip the intro and load this away-mission room
+ *   autotest_bridge     = MISSION:SEQ     Or skip the intro and start this bridge sequence
+ *   autotest_ticks      = N               Exit after N clock ticks (18.2 per second); default 200
+ *   autotest_dismiss    = N               Inject a Return keypress every N ticks (closes text boxes)
+ *   autotest_screenshot = PATH            Write the final screen to PATH as a PNG
+ * On exit it logs one "AUTOTEST:" line. Engine errors log "AUTOTEST: engine error: ..." and
+ * exit with a nonzero code instead of opening the debugger; crashes show up as no line at all.
+ */
+static bool autotestErrorHandler(const char *msg) {
+	// Report and exit instead of opening the interactive debugger, which would hang an
+	// unattended run.
+	g_system->logMessage(LogMessageType::kInfo, Common::String::format("AUTOTEST: engine error: %s\n", msg).c_str());
+	return false;
+}
+
+int StarTrekEngine::setupAutotest() {
+	bool bridge = ConfMan.hasKey("autotest_bridge");
+	if (!bridge && !ConfMan.hasKey("autotest_room"))
+		return -1;
+
+	const char *key = bridge ? "autotest_bridge" : "autotest_room";
+	Common::String spec = ConfMan.get(key);
+	int colon = spec.findFirstOf(':');
+	if (colon <= 0)
+		error("%s must look like MISSION:NUMBER, got '%s'", key, spec.c_str());
+
+	_missionToLoad = Common::String(spec.c_str(), colon);
+	_missionToLoad.toUppercase();
+	int number = atoi(spec.c_str() + colon + 1);
+	_roomIndexToLoad = bridge ? 0 : number;
+	_bridgeSequenceToLoad = bridge ? number : -1;
+
+	_autotestTicks = ConfMan.hasKey("autotest_ticks") ? ConfMan.getInt("autotest_ticks") : 200;
+	_autotestDismissEvery = ConfMan.hasKey("autotest_dismiss") ? ConfMan.getInt("autotest_dismiss") : 0;
+	if (ConfMan.hasKey("autotest_screenshot"))
+		_autotestScreenshot = ConfMan.getPath("autotest_screenshot");
+	_autotestStartTick = _clockTicks;
+	_autotestLastDismissTick = _clockTicks;
+	Common::setErrorHandler(autotestErrorHandler);
+	return bridge ? GAMEMODE_BRIDGE : GAMEMODE_AWAYMISSION;
+}
+
+void StarTrekEngine::runAutotestTick() {
+	if (_autotestTicks < 0)
+		return;
+
+	uint32 elapsed = _clockTicks - _autotestStartTick;
+
+	if (_autotestDismissEvery > 0 && _clockTicks - _autotestLastDismissTick >= (uint32)_autotestDismissEvery) {
+		_autotestLastDismissTick = _clockTicks;
+		TrekEvent keyEvent;
+		keyEvent.type = TREKEVENT_KEYDOWN;
+		keyEvent.kbd = Common::KeyState(Common::KEYCODE_RETURN, Common::ASCII_RETURN);
+		addEventToQueue(keyEvent);
+	}
+
+	if (elapsed >= (uint32)_autotestTicks)
+		finishAutotest("tick limit reached");
+}
+
+void StarTrekEngine::finishAutotest(const char *reason) {
+	if (!_autotestScreenshot.empty()) {
+		Common::DumpFile out;
+		::Graphics::Surface *screen = _system->lockScreen();
+		byte palette[256 * 3];
+		_system->getPaletteManager()->grabPalette(palette, 0, 256);
+		if (out.open(_autotestScreenshot, true))
+			Image::writePNG(out, *screen, palette);
+		_system->unlockScreen();
+	}
+
+	Common::String line = Common::String::format("AUTOTEST: %s room=%s ticks=%u mode=%d\n",
+		reason, getScreenName().c_str(), _clockTicks - _autotestStartTick, _gameMode);
+	_system->logMessage(LogMessageType::kInfo, line.c_str());
+	_autotestTicks = -1;
+	_system->quit();
 }
 
 Common::Error StarTrekEngine::runGameMode(int mode, bool resume) {

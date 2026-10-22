@@ -26,6 +26,7 @@ namespace StarTrek {
 void StarTrekEngine::pollEvents(bool queueEvents) {
 	Common::Event event;
 	TrekEvent trekEvent;
+	runAutotestTick();
 	while (_eventMan->pollEvent(event)) {
 		trekEvent.mouse = event.mouse;
 		trekEvent.kbd = event.kbd;
