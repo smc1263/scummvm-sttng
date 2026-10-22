@@ -30,7 +30,9 @@ class MidiDriver_NULL : public MidiDriver_MPU401 {
 public:
 	int open() override { return 0; }
  	bool isOpen() const override { return true; }
-	void send(uint32 b) override { }
+	// Still honour --dump-midi, so headless runs can record what a game plays.
+	void send(uint32 b) override { midiDriverCommonSend(b); }
+	void sysEx(const byte *msg, uint16 length) override { midiDriverCommonSysEx(msg, length); }
 };
 
 
