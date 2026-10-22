@@ -759,6 +759,12 @@ public:
 	uint32 _autotestLastDismissTick;
 	int32 _autotestDismissEvery;
 	Common::Path _autotestScreenshot;
+	struct AutotestWalk {
+		uint32 tick;
+		int16 x, y;
+		AutotestWalk(uint32 t, int16 px, int16 py) : tick(t), x(px), y(py) {}
+	};
+	Common::List<AutotestWalk> _autotestWalks;
 
 	int setupAutotest(); // Returns the game mode to start in, or -1 if disabled
 	void runAutotestTick();
