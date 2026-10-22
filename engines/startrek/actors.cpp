@@ -423,6 +423,10 @@ void StarTrekEngine::renderBanAboveSprites() {
 			surface.free();
 
 			_banFileOffsets[i] = _banFiles[i]->pos();
+		} else {
+			// Empty frames hold the previous image for one step. Without advancing here,
+			// animations containing them stopped at their first empty frame.
+			_banFileOffsets[i] = _banFiles[i]->pos();
 		}
 	}
 }
