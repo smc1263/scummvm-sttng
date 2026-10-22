@@ -29,6 +29,7 @@
 #include "common/events.h"
 #include "common/file.h"
 #include "common/macresman.h"
+#include "common/tokenizer.h"
 
 #include "graphics/paletteman.h"
 #include "graphics/pixelformat.h"
@@ -202,6 +203,7 @@ Common::Error StarTrekEngine::run() {
  *   autotest_ticks      = N               Exit after N clock ticks (18.2 per second); default 200
  *   autotest_dismiss    = N               Inject a Return keypress every N ticks (closes text boxes)
  *   autotest_screenshot = PATH            Write the final screen to PATH as a PNG
+ *   autotest_walk       = T:X:Y[;T:X:Y]   At tick T, walk Kirk to (X, Y) like a Walk click
  * On exit it logs one "AUTOTEST:" line. Engine errors log "AUTOTEST: engine error: ..." and
  * exit with a nonzero code instead of opening the debugger; crashes show up as no line at all.
  */
@@ -233,6 +235,15 @@ int StarTrekEngine::setupAutotest() {
 	_autotestDismissEvery = ConfMan.hasKey("autotest_dismiss") ? ConfMan.getInt("autotest_dismiss") : 0;
 	if (ConfMan.hasKey("autotest_screenshot"))
 		_autotestScreenshot = ConfMan.getPath("autotest_screenshot");
+	_autotestWalks.clear();
+	Common::StringTokenizer walks(ConfMan.get("autotest_walk"), ";");
+	while (!walks.empty()) {
+		Common::String walk = walks.nextToken();
+		int tick, x, y;
+		if (sscanf(walk.c_str(), "%d:%d:%d", &tick, &x, &y) != 3)
+			error("autotest_walk entries must look like TICK:X:Y, got '%s'", walk.c_str());
+		_autotestWalks.push_back(AutotestWalk(tick, x, y));
+	}
 	_autotestStartTick = _clockTicks;
 	_autotestLastDismissTick = _clockTicks;
 	Common::setErrorHandler(autotestErrorHandler);
@@ -253,6 +264,15 @@ void StarTrekEngine::runAutotestTick() {
 		addEventToQueue(keyEvent);
 	}
 
+	if (!_autotestWalks.empty() && elapsed >= _autotestWalks.front().tick && _gameMode == GAMEMODE_AWAYMISSION) {
+		AutotestWalk walk = _autotestWalks.front();
+		_autotestWalks.pop_front();
+		bool started = actorWalkToPosition(OBJECT_KIRK, getCrewmanAnimFilename(OBJECT_KIRK, "walk"),
+			_kirkActor->pos.x, _kirkActor->pos.y, walk.x, walk.y);
+		_system->logMessage(LogMessageType::kInfo, Common::String::format("AUTOTEST: walk to (%d,%d) %s\n",
+			walk.x, walk.y, started ? "started" : "refused").c_str());
+	}
+
 	if (elapsed >= (uint32)_autotestTicks)
 		finishAutotest("tick limit reached");
 }
@@ -268,8 +288,13 @@ void StarTrekEngine::finishAutotest(const char *reason) {
 		_system->unlockScreen();
 	}
 
-	Common::String line = Common::String::format("AUTOTEST: %s room=%s ticks=%u mode=%d\n",
+	Common::String line = Common::String::format("AUTOTEST: %s room=%s ticks=%u mode=%d",
 		reason, getScreenName().c_str(), _clockTicks - _autotestStartTick, _gameMode);
+	if (_gameMode == GAMEMODE_AWAYMISSION) {
+		for (int i = OBJECT_KIRK; i <= OBJECT_REDSHIRT; i++)
+			line += Common::String::format(" crew%d=%d,%d", i, _actorList[i].pos.x, _actorList[i].pos.y);
+	}
+	line += "\n";
 	_system->logMessage(LogMessageType::kInfo, line.c_str());
 	_autotestTicks = -1;
 	_system->quit();
