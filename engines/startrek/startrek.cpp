@@ -297,6 +297,11 @@ void StarTrekEngine::finishAutotest(const char *reason) {
 	line += "\n";
 	_system->logMessage(LogMessageType::kInfo, line.c_str());
 	_autotestTicks = -1;
+
+	// quit() exits without running destructors; shut sound down first so that
+	// --dump-midi output is written.
+	delete _sound;
+	_sound = nullptr;
 	_system->quit();
 }
 

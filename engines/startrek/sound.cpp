@@ -83,6 +83,9 @@ Sound::Sound(StarTrekEngine *vm) : _vm(vm) {
 }
 
 Sound::~Sound() {
+	// Stop the timer callback before freeing the parsers it drives.
+	if (_midiDriver)
+		_midiDriver->setTimerCallback(nullptr, nullptr);
 	for (int i = 0; i < NUM_MIDI_SLOTS; i++)
 		delete _midiSlots[i].midiParser;
 	delete _midiDriver;
