@@ -40,6 +40,7 @@ namespace StarTrek {
 
 class StarTrekEngine;
 class Room;
+class RoomScript;
 
 #include "common/pack-start.h"	// START STRUCT PACKING
 
@@ -70,6 +71,7 @@ public:
 	~Room();
 
 	friend class Console;
+	friend class RoomScript;
 
 	uint16 readRdfWord(int offset);
 
@@ -168,6 +170,10 @@ private:
 	AwayMission *_awayMission;
 
 	const RoomAction *_roomActionList;
+	RoomScript *_script; // replaces _roomActionList when the room has a Lua script
+
+	/** Log a room API call for automated tests (autotest_trace). */
+	void trace(const char *fmt, ...) GCC_PRINTF(2, 3);
 	const RoomTextOffsets *_roomTextList;
 	const RoomTextOffsets *_roomCommonTextList;
 	const RoomText *_roomStaticTextList;

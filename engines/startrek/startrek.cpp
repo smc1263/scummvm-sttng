@@ -101,6 +101,7 @@ StarTrekEngine::StarTrekEngine(OSystem *syst, const StarTrekGameDescription *gam
 	_autotestStartTick = 0;
 	_autotestLastDismissTick = 0;
 	_autotestDismissEvery = 0;
+	_autotestTrace = false;
 
 	_showSubtitles = true;
 	Common::fill(_r3List, _r3List + NUM_SPACE_OBJECTS, (R3 *)nullptr);
@@ -204,6 +205,8 @@ Common::Error StarTrekEngine::run() {
  *   autotest_dismiss    = N               Inject a Return keypress every N ticks (closes text boxes)
  *   autotest_screenshot = PATH            Write the final screen to PATH as a PNG
  *   autotest_walk       = T:X:Y[;T:X:Y]   At tick T, walk Kirk to (X, Y) like a Walk click
+ *   autotest_actions    = T:TYPE:B1:B2:B3[;...]  At tick T, queue a room action as the UI would
+ *   autotest_trace      = true            Log every room API call as a TRACE: line
  * On exit it logs one "AUTOTEST:" line. Engine errors log "AUTOTEST: engine error: ..." and
  * exit with a nonzero code instead of opening the debugger; crashes show up as no line at all.
  */
@@ -244,6 +247,23 @@ int StarTrekEngine::setupAutotest() {
 			error("autotest_walk entries must look like TICK:X:Y, got '%s'", walk.c_str());
 		_autotestWalks.push_back(AutotestWalk(tick, x, y));
 	}
+	_autotestActions.clear();
+	Common::StringTokenizer actions(ConfMan.get("autotest_actions"), ";");
+	while (!actions.empty()) {
+		Common::String entry = actions.nextToken();
+		int tick, type, b1, b2, b3;
+		if (sscanf(entry.c_str(), "%d:%d:%d:%d:%d", &tick, &type, &b1, &b2, &b3) != 5)
+			error("autotest_actions entries must look like TICK:TYPE:B1:B2:B3, got '%s'", entry.c_str());
+		AutotestAction a;
+		a.tick = tick;
+		a.action.type = type;
+		a.action.b1 = b1;
+		a.action.b2 = b2;
+		a.action.b3 = b3;
+		a.action.dummy = 0;
+		_autotestActions.push_back(a);
+	}
+	_autotestTrace = ConfMan.hasKey("autotest_trace") && ConfMan.getBool("autotest_trace");
 	_autotestStartTick = _clockTicks;
 	_autotestLastDismissTick = _clockTicks;
 	Common::setErrorHandler(autotestErrorHandler);
@@ -271,6 +291,15 @@ void StarTrekEngine::runAutotestTick() {
 			_kirkActor->pos.x, _kirkActor->pos.y, walk.x, walk.y);
 		_system->logMessage(LogMessageType::kInfo, Common::String::format("AUTOTEST: walk to (%d,%d) %s\n",
 			walk.x, walk.y, started ? "started" : "refused").c_str());
+	}
+
+	if (!_autotestActions.empty() && elapsed >= _autotestActions.front().tick && _gameMode == GAMEMODE_AWAYMISSION
+			&& _actionQueue.size() < 8) {
+		Action a = _autotestActions.front().action;
+		_autotestActions.pop_front();
+		_system->logMessage(LogMessageType::kInfo, Common::String::format("AUTOTEST: action %d %d %d %d\n",
+			a.type, a.b1, a.b2, a.b3).c_str());
+		addAction(a);
 	}
 
 	if (elapsed >= (uint32)_autotestTicks)
