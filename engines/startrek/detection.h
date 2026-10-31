@@ -28,7 +28,8 @@ namespace StarTrek {
 
 enum StarTrekGameType {
 	GType_ST25 = 1,
-	GType_STJR = 2
+	GType_STJR = 2,
+	GType_STTNG = 3 // Scripted games built on this engine (The Custodian Archive)
 };
 
 enum StarTrekGameFeatures {

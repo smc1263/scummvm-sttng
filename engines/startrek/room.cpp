@@ -111,7 +111,7 @@ Room::Room(StarTrekEngine *vm, const Common::String &name) : _vm(vm), _awayMissi
 	ADD_ROOM_COMMON(veng)
 
 	_script = nullptr;
-	if (RoomScript::isEnabled() && Common::File::exists(Common::Path(name + ".LUA"))) {
+	if (RoomScript::isEnabled(_vm) && Common::File::exists(Common::Path(name + ".LUA"))) {
 		Common::File file;
 		if (!file.open(Common::Path(name + ".LUA")))
 			error("Couldn't open room script %s.LUA", name.c_str());
@@ -122,6 +122,8 @@ Room::Room(StarTrekEngine *vm, const Common::String &name) : _vm(vm), _awayMissi
 	}
 
 	if (_roomActionList == nullptr && _script == nullptr) {
+		if (_vm->getGameType() == GType_STTNG)
+			error("Room %s has no script (%s.LUA)", name.c_str(), name.c_str());
 		warning("Room \"%s\" unimplemented", name.c_str());
 	}
 

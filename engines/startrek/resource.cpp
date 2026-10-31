@@ -32,7 +32,8 @@
 
 namespace StarTrek {
 
-Resource::Resource(Common::Platform platform, bool isDemo) : _platform(platform), _isDemo(isDemo), _macResFork(nullptr) {
+Resource::Resource(Common::Platform platform, bool isDemo, bool archiveRequired) : _platform(platform), _isDemo(isDemo),
+	_archiveRequired(archiveRequired), _macResFork(nullptr) {
 	if (_platform == Common::kPlatformMacintosh) {
 		_macResFork = new Common::MacResManager();
 		if (!_macResFork->open("Star Trek Data"))
@@ -58,8 +59,13 @@ void Resource::readIndexFile() {
 		indexFile = SearchMan.createReadStreamForMember("data.dir");
 	}
 
-	if (!indexFile)
+	if (!indexFile) {
+		if (!_archiveRequired) {
+			debug("No DATA.DIR found: using loose files only");
+			return;
+		}
 		error("Could not open directory file");
+	}
 
 	while (!indexFile->eos() && !indexFile->err()) {
 		_resources.push_back(getIndexEntry(indexFile));

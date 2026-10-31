@@ -782,6 +782,7 @@ public:
 	Common::Array<int> _autotestChoices; // choices made in multiple-choice text boxes, in order
 
 	int setupAutotest(bool resuming); // Returns the game mode to start in, or -1
+	void readSttngStart();
 	void runAutotestTick();
 	void finishAutotest(const char *reason);
 

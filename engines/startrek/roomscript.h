@@ -33,6 +33,7 @@ struct lua_State;
 namespace StarTrek {
 
 class Room;
+class StarTrekEngine;
 
 /**
  * Room logic written in Lua (<ROOM>.LUA, loaded as a loose file). The script registers
@@ -46,7 +47,7 @@ public:
 	~RoomScript();
 
 	/** True if a script should replace this room's compiled logic. */
-	static bool isEnabled();
+	static bool isEnabled(StarTrekEngine *vm);
 
 	bool actionHasCode(const Action &action, bool bitmask);
 	bool handleAction(const Action &action, bool bitmask);

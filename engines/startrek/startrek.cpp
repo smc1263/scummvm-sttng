@@ -155,7 +155,10 @@ Common::Error StarTrekEngine::run() {
 
 	bool isDemo = getFeatures() & GF_DEMO;
 	bool isCd = getFeatures() & GF_CDROM;
-	_resource = new Resource(getPlatform(), isDemo);
+	bool isSttng = getGameType() == GType_STTNG;
+	// sttng games ship loose files. During development the ST25 archive can still be
+	// reached through extrapath for placeholder assets.
+	_resource = new Resource(getPlatform(), isDemo, !isSttng);
 	_gfx = new Graphics(this);
 	_sound = new Sound(this);
 	setDebugger(new Console(this));
@@ -163,8 +166,10 @@ Common::Error StarTrekEngine::run() {
 	initGraphics(SCREEN_WIDTH, SCREEN_HEIGHT);
 	initializeEventsAndMouse();
 
-	if (!isDemo)
+	if (!isDemo && !isSttng)
 		loadBridgeComputerTopics();
+	if (isSttng)
+		readSttngStart();
 
 	_gfx->setMouseBitmap(!isDemo ? "pushbtn" : "cursor");
 
@@ -176,12 +181,15 @@ Common::Error StarTrekEngine::run() {
 		loadedSave = true;
 	}
 
-	int autotestMode = setupAutotest(loadedSave);
+	// For sttng without autotest_room, the harness runs but the game starts where STTNG.ID says.
+	int autotestMode = setupAutotest(loadedSave || (isSttng && !ConfMan.hasKey("autotest_room")));
 
 	if (autotestMode != -1) {
 		runGameMode(autotestMode, false);
 	} else if (!loadedSave) {
-		if (isCd || !isDemo) {
+		if (isSttng) {
+			runGameMode(GAMEMODE_AWAYMISSION, false);
+		} else if (isCd || !isDemo) {
 			playIntro();
 			_missionToLoad = "DEMON";
 			_bridgeSequenceToLoad = 0;
@@ -222,6 +230,29 @@ static bool autotestErrorHandler(const char *msg) {
 	// unattended run.
 	g_system->logMessage(LogMessageType::kInfo, Common::String::format("AUTOTEST: engine error: %s\n", msg).c_str());
 	return false;
+}
+
+void StarTrekEngine::readSttngStart() {
+	// STTNG.ID: one key=value per line. start=MISSION:INDEX names the first room.
+	Common::File file;
+	if (!file.open("sttng.id"))
+		error("Couldn't open STTNG.ID");
+	while (!file.eos()) {
+		Common::String line = file.readLine();
+		line.trim();
+		if (!line.hasPrefix("start="))
+			continue;
+		Common::String spec(line.c_str() + 6);
+		int colon = spec.findFirstOf(':');
+		if (colon <= 0)
+			error("STTNG.ID: start must look like MISSION:INDEX, got '%s'", spec.c_str());
+		_missionToLoad = Common::String(spec.c_str(), colon);
+		_missionToLoad.toUppercase();
+		_roomIndexToLoad = atoi(spec.c_str() + colon + 1);
+		_bridgeSequenceToLoad = -1;
+		return;
+	}
+	error("STTNG.ID has no start= line");
 }
 
 int StarTrekEngine::setupAutotest(bool resuming) {

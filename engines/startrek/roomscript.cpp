@@ -87,6 +87,72 @@ static const NamedValue kDirections[] = {
 	{ "N", DIR_N }, { "S", DIR_S }, { "E", DIR_E }, { "W", DIR_W }, { nullptr, 0 }
 };
 
+// Helpers written in Lua, loaded before every room script.
+static const char *const kPrelude = R"lua(
+-- Room ticks above 255 are split across b1 (low byte) and b2 (high byte).
+function on_tick(n, fn) on(ACTION.TICK, n % 256, math.floor(n / 256), 0, fn) end
+
+-- Away-team membership, recorded as team.<name> flags until crew selection exists.
+function on_team(name) return flag("team." .. string.lower(name)) ~= 0 end
+
+-- Dialogue trees: run_dialogue(tree [, start]) walks tree.nodes from tree.start and returns
+-- the name of the node it ended on. Node fields (all optional):
+--   speaker, text      a line, or a list of lines, said by speaker
+--   empathy            a line for Counselor Troi, said only if she is on the away team
+--   choices            menu said by speaker; each option has text, next, and optionally
+--                      condition (function), effect (function), once (hide after picking)
+--   condition          skip this node (go to `otherwise`) unless it returns true
+--   effect             function run after the node's lines/choice
+--   branch             function returning the next node's name (overrides next)
+--   next, otherwise    the following node; "end" or nil stops
+-- tree.id names the tree for remembering `once` options; tree.empathy_speaker overrides
+-- the name shown for empathic lines.
+function run_dialogue(tree, start)
+  local name = start or tree.start or "start"
+  local last = name
+  while name and name ~= "end" do
+    local node = tree.nodes[name]
+    if not node then error("dialogue " .. tostring(tree.id) .. ": no node '" .. tostring(name) .. "'") end
+    last = name
+    local nxt = node.next
+    if node.condition and not node.condition() then
+      nxt = node.otherwise
+    else
+      if node.text then
+        local lines = type(node.text) == "table" and node.text or { node.text }
+        for _, line in ipairs(lines) do say_text(node.speaker, line) end
+      end
+      if node.empathy and on_team("troi") then
+        say_text(tree.empathy_speaker or "Counselor Troi", node.empathy)
+      end
+      if node.choices then
+        local shown, texts = {}, {}
+        for i, opt in ipairs(node.choices) do
+          local id = "dlg." .. tostring(tree.id) .. "." .. name .. "." .. i
+          local hidden = (opt.once and flag(id) ~= 0) or (opt.condition and not opt.condition())
+          if not hidden then
+            shown[#shown + 1] = { opt = opt, id = id }
+            texts[#texts + 1] = opt.text
+          end
+        end
+        if #shown == 0 then
+          nxt = node.otherwise
+        else
+          local pick = shown[say_text(node.speaker, unpack(texts)) + 1]
+          if pick.opt.once then set_flag(pick.id) end
+          if pick.opt.effect then pick.opt.effect() end
+          nxt = pick.opt.next
+        end
+      end
+      if node.effect then node.effect() end
+      if node.branch then nxt = node.branch() end
+    end
+    name = nxt
+  end
+  return last
+end
+)lua";
+
 static void pushConstants(lua_State *L, const char *tableName, const NamedValue *values) {
 	lua_newtable(L);
 	for (const NamedValue *v = values; v->name; v++) {
@@ -96,8 +162,9 @@ static void pushConstants(lua_State *L, const char *tableName, const NamedValue 
 	lua_setglobal(L, tableName);
 }
 
-bool RoomScript::isEnabled() {
-	return ConfMan.hasKey("lua_rooms") && ConfMan.getBool("lua_rooms");
+bool RoomScript::isEnabled(StarTrekEngine *vm) {
+	// Always for sttng games; for ST25 only when testing ports (lua_rooms=true).
+	return vm->getGameType() == GType_STTNG || (ConfMan.hasKey("lua_rooms") && ConfMan.getBool("lua_rooms"));
 }
 
 RoomScript::RoomScript(Room *room, const Common::String &name, const char *source, uint32 size)
@@ -166,10 +233,7 @@ void RoomScript::registerApi() {
 	lua_pushinteger(_L, 0xff);
 	lua_setglobal(_L, "ANY");
 
-	// Helpers written in Lua. Room ticks above 255 are split across b1 (low) and b2 (high).
-	static const char *const prelude =
-		"function on_tick(n, fn) on(ACTION.TICK, n % 256, math.floor(n / 256), 0, fn) end\n";
-	if (luaL_dostring(_L, prelude) != 0)
+	if (luaL_dostring(_L, kPrelude) != 0)
 		error("Room script prelude: %s", lua_tostring(_L, -1));
 }
 
