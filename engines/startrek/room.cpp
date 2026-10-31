@@ -351,7 +351,14 @@ int Room::showRoomSpecificText(const char **array) {
 	} else
 		textColor = TEXTCOLOR_YELLOW;
 
-	return _vm->showText(&StarTrekEngine::readTextFromArrayWithChoices, (uintptr)array, 20, 20, textColor, true, false, false);
+	int choice = _vm->showText(&StarTrekEngine::readTextFromArrayWithChoices, (uintptr)array, 20, 20, textColor, true, false, false);
+	if (_vm->_autotestTrace) {
+		Common::String all = Common::String::format("[%.40s]", array[0] ? array[0] : "");
+		for (int i = 1; array[i] && array[i][0] != '\0'; i++)
+			all += Common::String::format(" [%.40s]", array[i]);
+		trace("text %s -> %d", all.c_str(), choice);
+	}
+	return choice;
 }
 
 const char *Room::getText(uint16 textId) {
@@ -417,12 +424,6 @@ int Room::showMultipleTexts(const TextRef *textIDs) {
 	text[numIDs] = "";	// terminator
 
 	retval = showRoomSpecificText(text);
-	if (_vm->_autotestTrace) {
-		Common::String all;
-		for (int i = 0; i < numIDs; i++)
-			all += Common::String::format("%s[%.40s]", i ? " " : "", text[i]);
-		trace("text %s -> %d", all.c_str(), retval);
-	}
 	free(text);
 
 	return retval;

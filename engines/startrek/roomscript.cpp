@@ -27,6 +27,7 @@
 #include "startrek/items.h"
 #include "startrek/room.h"
 #include "startrek/roomscript.h"
+#include "startrek/roomscript_st25.h"
 #include "startrek/startrek.h"
 
 namespace StarTrek {
@@ -142,7 +143,7 @@ RoomScript *RoomScript::fromState(lua_State *L) {
 void RoomScript::registerApi() {
 	static const luaL_Reg api[] = {
 		{ "on", luaOn }, { "still_do_default", luaStillDoDefault },
-		{ "say", luaSay }, { "say_multi", luaSayMulti }, { "describe", luaDescribe },
+		{ "say", luaSay }, { "say_text", luaSayText }, { "say_multi", luaSayMulti }, { "describe", luaDescribe },
 		{ "load_anim", luaLoadAnim }, { "load_stand_anim", luaLoadStandAnim },
 		{ "walk", luaWalk }, { "walk_wait", luaWalkWait }, { "anim_wait", luaAnimWait },
 		{ "give_item", luaGiveItem }, { "lose_item", luaLoseItem }, { "have_item", luaHaveItem },
@@ -150,7 +151,9 @@ void RoomScript::registerApi() {
 		{ "play_sfx", luaPlaySfx }, { "play_music", luaPlayMusic }, { "play_voc", luaPlayVoc },
 		{ "stop_vocs", luaStopVocs }, { "end_mission", luaEndMission }, { "game_over", luaGameOver },
 		{ "spock_scan", luaSpockScan }, { "mccoy_scan", luaMccoyScan }, { "set_timer", luaSetTimer },
-		{ "log", luaLog }, { nullptr, nullptr }
+		{ "log", luaLog }, { "set_input", luaSetInput },
+		{ "face_after_walk", luaFaceAfterWalk }, { "st25_get", luaSt25Get }, { "st25_set", luaSt25Set },
+		{ nullptr, nullptr }
 	};
 	for (const luaL_Reg *f = api; f->func; f++)
 		lua_register(_L, f->name, f->func);
@@ -261,6 +264,23 @@ int RoomScript::luaStillDoDefault(lua_State *L) {
 int RoomScript::luaSay(lua_State *L) {
 	int choice = fromState(L)->_room->showText((TextRef)luaL_checkinteger(L, 1), (TextRef)luaL_checkinteger(L, 2));
 	lua_pushinteger(L, choice);
+	return 1;
+}
+
+int RoomScript::luaSayText(lua_State *L) {
+	// say_text(speaker, line [, line2, ...]): one line is a message; several are a choice
+	// menu and the 0-based choice is returned. speaker may be nil or "" for narration.
+	int n = lua_gettop(L);
+	luaL_argcheck(L, n >= 2, 2, "say_text needs a speaker and at least one line");
+	Common::Array<Common::String> strings;
+	strings.push_back(lua_isnil(L, 1) ? "" : luaL_checkstring(L, 1));
+	for (int i = 2; i <= n; i++)
+		strings.push_back(luaL_checkstring(L, i));
+	Common::Array<const char *> array;
+	for (uint i = 0; i < strings.size(); i++)
+		array.push_back(strings[i].c_str());
+	array.push_back(""); // terminator
+	lua_pushinteger(L, fromState(L)->_room->showRoomSpecificText(array.data()));
 	return 1;
 }
 
@@ -403,6 +423,84 @@ int RoomScript::luaSetTimer(lua_State *L) {
 	int timer = luaL_checkinteger(L, 1);
 	luaL_argcheck(L, timer >= 0 && timer < 8, 1, "timer index must be 0-7");
 	fromState(L)->_room->_vm->_awayMission.timers[timer] = luaL_checkinteger(L, 2);
+	return 0;
+}
+
+int RoomScript::luaSetInput(lua_State *L) {
+	// set_input(true | false | "until_arrival"). Scripted sequences lock out the player like
+	// ST25 rooms do: a click would start a new walk for Kirk and cancel any walk_wait in
+	// progress. "until_arrival" unlocks by itself when the crew finishes walking.
+	byte mode;
+	if (lua_type(L, 1) == LUA_TSTRING) {
+		luaL_argcheck(L, strcmp(lua_tostring(L, 1), "until_arrival") == 0, 1, "expected true, false or \"until_arrival\"");
+		mode = 1;
+	} else {
+		mode = lua_toboolean(L, 1) ? 0 : 2;
+	}
+	fromState(L)->_room->_vm->_awayMission.disableInput = mode;
+	return 0;
+}
+
+int RoomScript::luaFaceAfterWalk(lua_State *L) {
+	int actor = luaL_checkinteger(L, 1);
+	luaL_argcheck(L, actor >= OBJECT_KIRK && actor <= OBJECT_REDSHIRT, 1, "crew member expected");
+	fromState(L)->_room->_vm->_awayMission.crewDirectionsAfterWalk[actor] = luaL_checkinteger(L, 2);
+	return 0;
+}
+
+static const St25Field *findSt25Field(lua_State *L) {
+	const char *name = luaL_checkstring(L, 1);
+	for (const St25Field *f = kSt25Fields; f->name; f++) {
+		if (strcmp(f->name, name) == 0)
+			return f;
+	}
+	luaL_error(L, "unknown ST25 mission field '%s'", name);
+	return nullptr;
+}
+
+int RoomScript::luaSt25Get(lua_State *L) {
+	const St25Field *f = findSt25Field(L);
+	void *p = f->get(&fromState(L)->_room->_vm->_awayMission);
+	switch (f->kind) {
+	case kBool:
+		lua_pushboolean(L, *(bool *)p);
+		break;
+	case kByte:
+		lua_pushinteger(L, *(byte *)p);
+		break;
+	case kInt8:
+		lua_pushinteger(L, *(int8 *)p);
+		break;
+	case kInt16:
+		lua_pushinteger(L, *(int16 *)p);
+		break;
+	case kUint16:
+		lua_pushinteger(L, *(uint16 *)p);
+		break;
+	}
+	return 1;
+}
+
+int RoomScript::luaSt25Set(lua_State *L) {
+	const St25Field *f = findSt25Field(L);
+	void *p = f->get(&fromState(L)->_room->_vm->_awayMission);
+	switch (f->kind) {
+	case kBool:
+		*(bool *)p = lua_toboolean(L, 2);
+		break;
+	case kByte:
+		*(byte *)p = (byte)luaL_checkinteger(L, 2);
+		break;
+	case kInt8:
+		*(int8 *)p = (int8)luaL_checkinteger(L, 2);
+		break;
+	case kInt16:
+		*(int16 *)p = (int16)luaL_checkinteger(L, 2);
+		break;
+	case kUint16:
+		*(uint16 *)p = (uint16)luaL_checkinteger(L, 2);
+		break;
+	}
 	return 0;
 }
 

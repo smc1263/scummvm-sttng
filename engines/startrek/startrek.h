@@ -771,6 +771,8 @@ public:
 	};
 	Common::List<AutotestAction> _autotestActions;
 	bool _autotestTrace; // log room API calls as TRACE: lines (read by Room::trace)
+	int _textboxDepth; // > 0 while showText() is waiting for the player
+	Common::Array<int> _autotestChoices; // choices made in multiple-choice text boxes, in order
 
 	int setupAutotest(); // Returns the game mode to start in, or -1 if disabled
 	void runAutotestTick();

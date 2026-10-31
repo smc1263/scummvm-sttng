@@ -77,6 +77,7 @@ private:
 	static int luaOn(lua_State *L);
 	static int luaStillDoDefault(lua_State *L);
 	static int luaSay(lua_State *L);
+	static int luaSayText(lua_State *L);
 	static int luaSayMulti(lua_State *L);
 	static int luaDescribe(lua_State *L);
 	static int luaLoadAnim(lua_State *L);
@@ -100,6 +101,10 @@ private:
 	static int luaMccoyScan(lua_State *L);
 	static int luaSetTimer(lua_State *L);
 	static int luaLog(lua_State *L);
+	static int luaSetInput(lua_State *L);
+	static int luaFaceAfterWalk(lua_State *L);
+	static int luaSt25Get(lua_State *L);
+	static int luaSt25Set(lua_State *L);
 };
 
 } // End of namespace StarTrek

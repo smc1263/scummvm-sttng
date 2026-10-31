@@ -44,6 +44,7 @@
 #include "startrek/lzss.h"
 #include "startrek/resource.h"
 #include "startrek/room.h"
+#include "startrek/roomscript_st25.h"
 #include "startrek/startrek.h"
 
 namespace StarTrek {
@@ -102,6 +103,7 @@ StarTrekEngine::StarTrekEngine(OSystem *syst, const StarTrekGameDescription *gam
 	_autotestLastDismissTick = 0;
 	_autotestDismissEvery = 0;
 	_autotestTrace = false;
+	_textboxDepth = 0;
 
 	_showSubtitles = true;
 	Common::fill(_r3List, _r3List + NUM_SPACE_OBJECTS, (R3 *)nullptr);
@@ -202,11 +204,12 @@ Common::Error StarTrekEngine::run() {
  *   autotest_room       = MISSION:INDEX   Skip the intro and load this away-mission room
  *   autotest_bridge     = MISSION:SEQ     Or skip the intro and start this bridge sequence
  *   autotest_ticks      = N               Exit after N clock ticks (18.2 per second); default 200
- *   autotest_dismiss    = N               Inject a Return keypress every N ticks (closes text boxes)
+ *   autotest_dismiss    = N               While a text box is open, press Return every N ticks
  *   autotest_screenshot = PATH            Write the final screen to PATH as a PNG
  *   autotest_walk       = T:X:Y[;T:X:Y]   At tick T, walk Kirk to (X, Y) like a Walk click
  *   autotest_actions    = T:TYPE:B1:B2:B3[;...]  At tick T, queue a room action as the UI would
  *   autotest_trace      = true            Log every room API call as a TRACE: line
+ *   autotest_choices    = N[,N...]        Choices made in multiple-choice text boxes, in order
  * On exit it logs one "AUTOTEST:" line. Engine errors log "AUTOTEST: engine error: ..." and
  * exit with a nonzero code instead of opening the debugger; crashes show up as no line at all.
  */
@@ -264,6 +267,10 @@ int StarTrekEngine::setupAutotest() {
 		_autotestActions.push_back(a);
 	}
 	_autotestTrace = ConfMan.hasKey("autotest_trace") && ConfMan.getBool("autotest_trace");
+	_autotestChoices.clear();
+	Common::StringTokenizer choices(ConfMan.get("autotest_choices"), ",");
+	while (!choices.empty())
+		_autotestChoices.push_back(atoi(choices.nextToken().c_str()));
 	_autotestStartTick = _clockTicks;
 	_autotestLastDismissTick = _clockTicks;
 	Common::setErrorHandler(autotestErrorHandler);
@@ -276,7 +283,8 @@ void StarTrekEngine::runAutotestTick() {
 
 	uint32 elapsed = _clockTicks - _autotestStartTick;
 
-	if (_autotestDismissEvery > 0 && _clockTicks - _autotestLastDismissTick >= (uint32)_autotestDismissEvery) {
+	// Only while a text box is open: elsewhere Return acts as a click and would walk Kirk.
+	if (_autotestDismissEvery > 0 && _textboxDepth > 0 && _clockTicks - _autotestLastDismissTick >= (uint32)_autotestDismissEvery) {
 		_autotestLastDismissTick = _clockTicks;
 		TrekEvent keyEvent;
 		keyEvent.type = TREKEVENT_KEYDOWN;
@@ -325,6 +333,24 @@ void StarTrekEngine::finishAutotest(const char *reason) {
 	}
 	line += "\n";
 	_system->logMessage(LogMessageType::kInfo, line.c_str());
+
+	// Non-zero state of the current mission, so tests can compare the effects of room logic.
+	if (_autotestTrace && _gameMode == GAMEMODE_AWAYMISSION) {
+		Common::String prefix = _missionName;
+		prefix.toLowercase();
+		prefix += ".";
+		Common::String state = "AUTOTEST: state";
+		for (const St25Field *f = kSt25Fields; f->name; f++) {
+			if (!Common::String(f->name).hasPrefix(prefix.c_str()) && strcmp(f->name, "redshirtDead") != 0)
+				continue;
+			void *p = f->get(&_awayMission);
+			int value = f->kind == kBool ? *(bool *)p : f->kind == kByte ? *(byte *)p : f->kind == kInt8 ? *(int8 *)p
+				: f->kind == kInt16 ? *(int16 *)p : *(uint16 *)p;
+			if (value != 0)
+				state += Common::String::format(" %s=%d", f->name, value);
+		}
+		_system->logMessage(LogMessageType::kInfo, (state + "\n").c_str());
+	}
 	_autotestTicks = -1;
 
 	// quit() exits without running destructors; shut sound down first so that

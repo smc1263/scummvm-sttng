@@ -245,6 +245,7 @@ Common::String StarTrekEngine::playTextAudio(const Common::String &str) {
 }
 
 int StarTrekEngine::showText(TextGetterFunc textGetter, uintptr var, int xoffset, int yoffset, int textColor, bool loopChoices, int maxTextLines, bool rclickCancelsChoice) {
+	_textboxDepth++;
 	int16 tmpTextDisplayMode = _textDisplayMode;
 
 	uint32 ticksUntilClickingEnabled = 8;
@@ -351,6 +352,8 @@ int StarTrekEngine::showText(TextGetterFunc textGetter, uintptr var, int xoffset
 				break;
 
 			case TEXTBUTTON_CONFIRM:
+				if (numChoices > 1 && !_autotestChoices.empty())
+					choiceIndex = _autotestChoices.remove_at(0) % numChoices;
 				doneShowingText = true;
 				break;
 
@@ -482,6 +485,7 @@ int StarTrekEngine::showText(TextGetterFunc textGetter, uintptr var, int xoffset
 	_textboxVar2 = _frameIndex;
 	_sound->stopPlayingSpeech();
 
+	_textboxDepth--;
 	return choiceIndex;
 }
 
