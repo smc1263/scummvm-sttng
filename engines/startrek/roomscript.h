@@ -50,6 +50,7 @@ public:
 
 	bool actionHasCode(const Action &action, bool bitmask);
 	bool handleAction(const Action &action, bool bitmask);
+	bool isBusy() const { return !_waiting.empty(); }
 
 private:
 	struct Handler {
@@ -105,6 +106,12 @@ private:
 	static int luaFaceAfterWalk(lua_State *L);
 	static int luaSt25Get(lua_State *L);
 	static int luaSt25Set(lua_State *L);
+	static int luaFlag(lua_State *L);
+	static int luaSetFlag(lua_State *L);
+	static int luaAddFlag(lua_State *L);
+	static int luaRoomVar(lua_State *L);
+	static int luaSetRoomVar(lua_State *L);
+	static int luaAddRoomVar(lua_State *L);
 };
 
 } // End of namespace StarTrek

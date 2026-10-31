@@ -153,6 +153,8 @@ void RoomScript::registerApi() {
 		{ "spock_scan", luaSpockScan }, { "mccoy_scan", luaMccoyScan }, { "set_timer", luaSetTimer },
 		{ "log", luaLog }, { "set_input", luaSetInput },
 		{ "face_after_walk", luaFaceAfterWalk }, { "st25_get", luaSt25Get }, { "st25_set", luaSt25Set },
+		{ "flag", luaFlag }, { "set_flag", luaSetFlag }, { "add_flag", luaAddFlag },
+		{ "room_var", luaRoomVar }, { "set_room_var", luaSetRoomVar }, { "add_room_var", luaAddRoomVar },
 		{ nullptr, nullptr }
 	};
 	for (const luaL_Reg *f = api; f->func; f++)
@@ -163,6 +165,12 @@ void RoomScript::registerApi() {
 	pushConstants(_L, "DIR", kDirections);
 	lua_pushinteger(_L, 0xff);
 	lua_setglobal(_L, "ANY");
+
+	// Helpers written in Lua. Room ticks above 255 are split across b1 (low) and b2 (high).
+	static const char *const prelude =
+		"function on_tick(n, fn) on(ACTION.TICK, n % 256, math.floor(n / 256), 0, fn) end\n";
+	if (luaL_dostring(_L, prelude) != 0)
+		error("Room script prelude: %s", lua_tostring(_L, -1));
 }
 
 bool RoomScript::matches(const Handler &h, const Action &action, bool bitmask) {
@@ -502,6 +510,67 @@ int RoomScript::luaSt25Set(lua_State *L) {
 		break;
 	}
 	return 0;
+}
+
+// Flags last for the whole game; room vars are cleared whenever a room loads. Both are
+// engine-owned and saved with the game, unlike Lua locals. Values are integers; true and
+// false are stored as 1 and 0, and unset names read as 0.
+static int32 toFlagValue(lua_State *L, int index, int32 def) {
+	if (lua_isnoneornil(L, index))
+		return def;
+	if (lua_isboolean(L, index))
+		return lua_toboolean(L, index) ? 1 : 0;
+	return (int32)luaL_checkinteger(L, index);
+}
+
+static int getValue(lua_State *L, Common::HashMap<Common::String, int32> &values) {
+	Common::HashMap<Common::String, int32>::const_iterator it = values.find(luaL_checkstring(L, 1));
+	lua_pushinteger(L, it == values.end() ? 0 : it->_value);
+	return 1;
+}
+
+int RoomScript::luaFlag(lua_State *L) {
+	return getValue(L, fromState(L)->_room->_vm->_scriptFlags);
+}
+
+int RoomScript::luaSetFlag(lua_State *L) {
+	RoomScript *s = fromState(L);
+	const char *name = luaL_checkstring(L, 1);
+	int32 value = toFlagValue(L, 2, 1);
+	s->_room->_vm->_scriptFlags[name] = value;
+	s->_room->trace("flag %s=%d", name, value);
+	return 0;
+}
+
+int RoomScript::luaAddFlag(lua_State *L) {
+	RoomScript *s = fromState(L);
+	const char *name = luaL_checkstring(L, 1);
+	int32 value = (s->_room->_vm->_scriptFlags[name] += toFlagValue(L, 2, 1));
+	s->_room->trace("flag %s=%d", name, value);
+	lua_pushinteger(L, value);
+	return 1;
+}
+
+int RoomScript::luaRoomVar(lua_State *L) {
+	return getValue(L, fromState(L)->_room->_vm->_scriptRoomVars);
+}
+
+int RoomScript::luaSetRoomVar(lua_State *L) {
+	RoomScript *s = fromState(L);
+	const char *name = luaL_checkstring(L, 1);
+	int32 value = toFlagValue(L, 2, 1);
+	s->_room->_vm->_scriptRoomVars[name] = value;
+	s->_room->trace("roomvar %s=%d", name, value);
+	return 0;
+}
+
+int RoomScript::luaAddRoomVar(lua_State *L) {
+	RoomScript *s = fromState(L);
+	const char *name = luaL_checkstring(L, 1);
+	int32 value = (s->_room->_vm->_scriptRoomVars[name] += toFlagValue(L, 2, 1));
+	s->_room->trace("roomvar %s=%d", name, value);
+	lua_pushinteger(L, value);
+	return 1;
 }
 
 int RoomScript::luaLog(lua_State *L) {

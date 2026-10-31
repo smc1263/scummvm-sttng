@@ -117,6 +117,9 @@ public:
 	bool handleActionWithBitmask(const Action &action);
 	bool handleActionWithBitmask(int8 type, byte b1, byte b2, byte b3);
 
+	/** True while a room script is waiting for a walk or animation to finish. */
+	bool isScriptBusy() const;
+
 	uint16 getFirstHotspot() {
 		return readRdfWord(0x12);
 	}

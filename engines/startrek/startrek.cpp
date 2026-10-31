@@ -22,6 +22,7 @@
 
 #include "base/plugins.h"
 #include "base/version.h"
+#include "common/algorithm.h"
 #include "common/archive.h"
 #include "common/config-manager.h"
 #include "common/debug-channels.h"
@@ -175,7 +176,7 @@ Common::Error StarTrekEngine::run() {
 		loadedSave = true;
 	}
 
-	int autotestMode = loadedSave ? -1 : setupAutotest();
+	int autotestMode = setupAutotest(loadedSave);
 
 	if (autotestMode != -1) {
 		runGameMode(autotestMode, false);
@@ -210,6 +211,9 @@ Common::Error StarTrekEngine::run() {
  *   autotest_actions    = T:TYPE:B1:B2:B3[;...]  At tick T, queue a room action as the UI would
  *   autotest_trace      = true            Log every room API call as a TRACE: line
  *   autotest_choices    = N[,N...]        Choices made in multiple-choice text boxes, in order
+ *   autotest_save       = T:SLOT[;...]    At tick T, save the game to SLOT
+ * When the game is started from a save (save_slot), the harness runs if autotest_ticks is
+ * set, and the room/bridge keys are ignored.
  * On exit it logs one "AUTOTEST:" line. Engine errors log "AUTOTEST: engine error: ..." and
  * exit with a nonzero code instead of opening the debugger; crashes show up as no line at all.
  */
@@ -220,22 +224,27 @@ static bool autotestErrorHandler(const char *msg) {
 	return false;
 }
 
-int StarTrekEngine::setupAutotest() {
+int StarTrekEngine::setupAutotest(bool resuming) {
 	bool bridge = ConfMan.hasKey("autotest_bridge");
-	if (!bridge && !ConfMan.hasKey("autotest_room"))
-		return -1;
+	if (resuming) {
+		if (!ConfMan.hasKey("autotest_ticks"))
+			return -1;
+	} else {
+		if (!bridge && !ConfMan.hasKey("autotest_room"))
+			return -1;
 
-	const char *key = bridge ? "autotest_bridge" : "autotest_room";
-	Common::String spec = ConfMan.get(key);
-	int colon = spec.findFirstOf(':');
-	if (colon <= 0)
-		error("%s must look like MISSION:NUMBER, got '%s'", key, spec.c_str());
+		const char *key = bridge ? "autotest_bridge" : "autotest_room";
+		Common::String spec = ConfMan.get(key);
+		int colon = spec.findFirstOf(':');
+		if (colon <= 0)
+			error("%s must look like MISSION:NUMBER, got '%s'", key, spec.c_str());
 
-	_missionToLoad = Common::String(spec.c_str(), colon);
-	_missionToLoad.toUppercase();
-	int number = atoi(spec.c_str() + colon + 1);
-	_roomIndexToLoad = bridge ? 0 : number;
-	_bridgeSequenceToLoad = bridge ? number : -1;
+		_missionToLoad = Common::String(spec.c_str(), colon);
+		_missionToLoad.toUppercase();
+		int number = atoi(spec.c_str() + colon + 1);
+		_roomIndexToLoad = bridge ? 0 : number;
+		_bridgeSequenceToLoad = bridge ? number : -1;
+	}
 
 	_autotestTicks = ConfMan.hasKey("autotest_ticks") ? ConfMan.getInt("autotest_ticks") : 200;
 	_autotestDismissEvery = ConfMan.hasKey("autotest_dismiss") ? ConfMan.getInt("autotest_dismiss") : 0;
@@ -271,9 +280,20 @@ int StarTrekEngine::setupAutotest() {
 	Common::StringTokenizer choices(ConfMan.get("autotest_choices"), ",");
 	while (!choices.empty())
 		_autotestChoices.push_back(atoi(choices.nextToken().c_str()));
+	_autotestSaves.clear();
+	Common::StringTokenizer saves(ConfMan.get("autotest_save"), ";");
+	while (!saves.empty()) {
+		Common::String entry = saves.nextToken();
+		int tick, slot;
+		if (sscanf(entry.c_str(), "%d:%d", &tick, &slot) != 2)
+			error("autotest_save entries must look like TICK:SLOT, got '%s'", entry.c_str());
+		_autotestSaves.push_back(AutotestWalk(tick, slot, 0));
+	}
 	_autotestStartTick = _clockTicks;
 	_autotestLastDismissTick = _clockTicks;
 	Common::setErrorHandler(autotestErrorHandler);
+	if (resuming)
+		return -1;
 	return bridge ? GAMEMODE_BRIDGE : GAMEMODE_AWAYMISSION;
 }
 
@@ -308,6 +328,14 @@ void StarTrekEngine::runAutotestTick() {
 		_system->logMessage(LogMessageType::kInfo, Common::String::format("AUTOTEST: action %d %d %d %d\n",
 			a.type, a.b1, a.b2, a.b3).c_str());
 		addAction(a);
+	}
+
+	if (!_autotestSaves.empty() && elapsed >= _autotestSaves.front().tick && _textboxDepth == 0) {
+		int slot = _autotestSaves.front().x;
+		_autotestSaves.pop_front();
+		bool saved = saveGame(slot, "autotest");
+		_system->logMessage(LogMessageType::kInfo, Common::String::format("AUTOTEST: save slot %d %s\n",
+			slot, saved ? "ok" : "refused").c_str());
 	}
 
 	if (elapsed >= (uint32)_autotestTicks)
@@ -350,6 +378,16 @@ void StarTrekEngine::finishAutotest(const char *reason) {
 				state += Common::String::format(" %s=%d", f->name, value);
 		}
 		_system->logMessage(LogMessageType::kInfo, (state + "\n").c_str());
+	}
+	if (_autotestTrace) {
+		Common::Array<Common::String> names;
+		for (Common::HashMap<Common::String, int32>::const_iterator it = _scriptFlags.begin(); it != _scriptFlags.end(); ++it)
+			names.push_back(it->_key);
+		Common::sort(names.begin(), names.end());
+		Common::String flags = "AUTOTEST: flags";
+		for (uint i = 0; i < names.size(); i++)
+			flags += Common::String::format(" %s=%d", names[i].c_str(), _scriptFlags[names[i]]);
+		_system->logMessage(LogMessageType::kInfo, (flags + "\n").c_str());
 	}
 	_autotestTicks = -1;
 

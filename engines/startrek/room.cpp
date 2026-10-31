@@ -200,6 +200,10 @@ bool Room::handleAction(const Action &action) {
 	return false;
 }
 
+bool Room::isScriptBusy() const {
+	return _script && _script->isBusy();
+}
+
 bool Room::handleAction(int8 type, byte b1, byte b2, byte b3) {
 	const Action a = {type, b1, b2, b3, 0};
 	return handleAction(a);

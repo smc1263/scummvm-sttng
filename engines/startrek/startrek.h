@@ -23,6 +23,8 @@
 #define STARTREK_H
 
 #include "common/events.h"
+#include "common/hash-str.h"
+#include "common/hashmap.h"
 #include "common/list.h"
 #include "common/ptr.h"
 #include "common/random.h"
@@ -770,11 +772,16 @@ public:
 		Action action;
 	};
 	Common::List<AutotestAction> _autotestActions;
+	Common::List<AutotestWalk> _autotestSaves; // tick, and the save slot in x
 	bool _autotestTrace; // log room API calls as TRACE: lines (read by Room::trace)
 	int _textboxDepth; // > 0 while showText() is waiting for the player
+
+	// State owned by room scripts, saved with the game (savegame version 2+).
+	Common::HashMap<Common::String, int32> _scriptFlags;    // kept for the whole game
+	Common::HashMap<Common::String, int32> _scriptRoomVars; // cleared when a room loads
 	Common::Array<int> _autotestChoices; // choices made in multiple-choice text boxes, in order
 
-	int setupAutotest(); // Returns the game mode to start in, or -1 if disabled
+	int setupAutotest(bool resuming); // Returns the game mode to start in, or -1
 	void runAutotestTick();
 	void finishAutotest(const char *reason);
 
