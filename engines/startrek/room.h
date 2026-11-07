@@ -40,6 +40,7 @@ namespace StarTrek {
 
 class StarTrekEngine;
 class Room;
+class RoomScript;
 
 #include "common/pack-start.h"	// START STRUCT PACKING
 
@@ -70,6 +71,7 @@ public:
 	~Room();
 
 	friend class Console;
+	friend class RoomScript;
 
 	uint16 readRdfWord(int offset);
 
@@ -114,6 +116,9 @@ public:
 	 */
 	bool handleActionWithBitmask(const Action &action);
 	bool handleActionWithBitmask(int8 type, byte b1, byte b2, byte b3);
+
+	/** True while a room script is waiting for a walk or animation to finish. */
+	bool isScriptBusy() const;
 
 	uint16 getFirstHotspot() {
 		return readRdfWord(0x12);
@@ -168,6 +173,10 @@ private:
 	AwayMission *_awayMission;
 
 	const RoomAction *_roomActionList;
+	RoomScript *_script; // replaces _roomActionList when the room has a Lua script
+
+	/** Log a room API call for automated tests (autotest_trace). */
+	void trace(const char *fmt, ...) GCC_PRINTF(2, 3);
 	const RoomTextOffsets *_roomTextList;
 	const RoomTextOffsets *_roomCommonTextList;
 	const RoomText *_roomStaticTextList;

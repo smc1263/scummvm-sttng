@@ -49,6 +49,10 @@ BridgeActorAndMenu bridgeActorsAndMenus[] = {
 };
 
 void StarTrekEngine::initBridge(bool b) {
+	// ADR 0003: the ST25 bridge (and the space battles behind it) is not part of sttng games.
+	if (getGameType() == GType_STTNG)
+		error("The ST25 bridge is not available in sttng games");
+
 	_gfx->loadPalette("bridge");
 	_sound->loadMusicFile("bridge");
 

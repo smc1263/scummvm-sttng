@@ -19,10 +19,13 @@
  *
  */
 
+#include "common/file.h"
+
 #include "startrek/bridge.h"
 #include "startrek/iwfile.h"
 #include "startrek/resource.h"
 #include "startrek/room.h"
+#include "startrek/roomscript.h"
 #include "startrek/startrek.h"
 
 #include "rooms/function_map.h"
@@ -107,7 +110,20 @@ Room::Room(StarTrekEngine *vm, const Common::String &name) : _vm(vm), _awayMissi
 	ADD_ROOM(veng8)
 	ADD_ROOM_COMMON(veng)
 
-	if (_roomActionList == nullptr) {
+	_script = nullptr;
+	if (RoomScript::isEnabled(_vm) && Common::File::exists(Common::Path(name + ".LUA"))) {
+		Common::File file;
+		if (!file.open(Common::Path(name + ".LUA")))
+			error("Couldn't open room script %s.LUA", name.c_str());
+		Common::String source = file.readString(0, file.size());
+		_script = new RoomScript(this, name, source.c_str(), source.size());
+		if (_vm->_autotestTrace)
+			_vm->_system->logMessage(LogMessageType::kInfo, Common::String::format("AUTOTEST: room script %s.LUA loaded\n", name.c_str()).c_str());
+	}
+
+	if (_roomActionList == nullptr && _script == nullptr) {
+		if (_vm->getGameType() == GType_STTNG)
+			error("Room %s has no script (%s.LUA)", name.c_str(), name.c_str());
 		warning("Room \"%s\" unimplemented", name.c_str());
 	}
 
@@ -118,6 +134,7 @@ Room::Room(StarTrekEngine *vm, const Common::String &name) : _vm(vm), _awayMissi
 }
 
 Room::~Room() {
+	delete _script;
 	delete[] _rdfData;
 	delete[] _commonRdfData;
 }
@@ -134,11 +151,24 @@ byte *Room::loadRoomRDF(Common::String fileName) {
 	return buffer;
 }
 
+void Room::trace(const char *fmt, ...) {
+	if (!_vm->_autotestTrace)
+		return;
+	va_list va;
+	va_start(va, fmt);
+	Common::String line = "TRACE: " + Common::String::vformat(fmt, va) + "\n";
+	va_end(va);
+	_vm->_system->logMessage(LogMessageType::kInfo, line.c_str());
+}
+
 uint16 Room::readRdfWord(int offset) {
 	return READ_LE_UINT16((_rdfData + offset));
 }
 
 bool Room::actionHasCode(const Action &action) {
+	if (_script)
+		return _script->actionHasCode(action, false);
+
 	const RoomAction *roomActionPtr = _roomActionList;
 
 	while (roomActionPtr->action.type != ACTION_LIST_END) {
@@ -155,6 +185,9 @@ bool Room::actionHasCode(int8 type, byte b1, byte b2, byte b3) {
 }
 
 bool Room::handleAction(const Action &action) {
+	if (_script)
+		return _script->handleAction(action, false);
+
 	const RoomAction *roomActionPtr = _roomActionList;
 
 	while (roomActionPtr->action.type != ACTION_LIST_END) {
@@ -169,12 +202,19 @@ bool Room::handleAction(const Action &action) {
 	return false;
 }
 
+bool Room::isScriptBusy() const {
+	return _script && _script->isBusy();
+}
+
 bool Room::handleAction(int8 type, byte b1, byte b2, byte b3) {
 	const Action a = {type, b1, b2, b3, 0};
 	return handleAction(a);
 }
 
 bool Room::handleActionWithBitmask(const Action &action) {
+	if (_script)
+		return _script->handleAction(action, true);
+
 	const RoomAction *roomActionPtr = _roomActionList;
 
 	while (roomActionPtr->action.type != ACTION_LIST_END) {
@@ -240,6 +280,7 @@ void Room::loadActorAnim(int actorIndex, Common::String anim, int16 x, int16 y, 
 		y = actor->sprite.pos.y;
 	}
 
+	trace("anim actor=%d %s at %d,%d param=%d", actorIndex, anim.c_str(), x, y, finishedAnimActionParam);
 	if (actorIndex >= 0 && actorIndex < SCALED_ACTORS_END)
 		_vm->loadActorAnimWithRoomScaling(actorIndex, anim, x, y);
 	else
@@ -270,9 +311,12 @@ void Room::loadActorAnimC(int actorIndex, Common::String anim, int16 x, int16 y,
 		actor->triggerActionWhenAnimFinished = true;
 		actor->finishedAnimActionParam = findFunctionPointer(ACTION_FINISHED_ANIMATION, funcPtr);
 	}
+	trace("anim actor=%d %s at %d,%d param=%d", actorIndex, anim.c_str(), x, y,
+		funcPtr ? actor->finishedAnimActionParam : 0);
 }
 
 void Room::loadActorStandAnim(int actorIndex) {
+	trace("stand actor=%d", actorIndex);
 	if (_vm->_awayMission.redshirtDead && actorIndex == OBJECT_REDSHIRT)
 		_vm->removeActorFromScreen(actorIndex);
 	else {
@@ -313,7 +357,14 @@ int Room::showRoomSpecificText(const char **array) {
 	} else
 		textColor = TEXTCOLOR_YELLOW;
 
-	return _vm->showText(&StarTrekEngine::readTextFromArrayWithChoices, (uintptr)array, 20, 20, textColor, true, false, false);
+	int choice = _vm->showText(&StarTrekEngine::readTextFromArrayWithChoices, (uintptr)array, 20, 20, textColor, true, false, false);
+	if (_vm->_autotestTrace) {
+		Common::String all = Common::String::format("[%.40s]", array[0] ? array[0] : "");
+		for (int i = 1; array[i] && array[i][0] != '\0'; i++)
+			all += Common::String::format(" [%.40s]", array[i]);
+		trace("text %s -> %d", all.c_str(), choice);
+	}
+	return choice;
 }
 
 const char *Room::getText(uint16 textId) {
@@ -397,11 +448,13 @@ int Room::showDescription(TextRef text) {
 }
 
 void Room::giveItem(int item) {
+	trace("give %d", item);
 	assert(item >= ITEMS_START && item < ITEMS_END);
 	_vm->_itemList[item - ITEMS_START].have = true;
 }
 
 void Room::loadRoomIndex(int roomIndex, int spawnIndex) {
+	trace("room %d spawn %d", roomIndex, spawnIndex);
 	if (_vm->_awayMission.crewDownBitset != 0)
 		return;
 
@@ -415,6 +468,7 @@ void Room::loadRoomIndex(int roomIndex, int spawnIndex) {
 }
 
 void Room::loseItem(int item) {
+	trace("lose %d", item);
 	assert(item >= ITEMS_START && item < ITEMS_END);
 	_vm->_itemList[item - ITEMS_START].have = false;
 
@@ -437,6 +491,8 @@ void Room::walkCrewman(int actorIndex, int16 destX, int16 destY, uint16 finished
 		actor->triggerActionWhenAnimFinished = true;
 		actor->finishedAnimActionParam = finishedAnimActionParam;
 	}
+	trace("walk actor=%d to %d,%d param=%d %s", actorIndex, destX, destY, finishedAnimActionParam,
+		success ? "ok" : "refused");
 }
 
 // Same as above, but with a function callback instead of an integer value to generate an
@@ -454,6 +510,8 @@ void Room::walkCrewmanC(int actorIndex, int16 destX, int16 destY, void (Room::*f
 		actor->finishedAnimActionParam = 0;
 		actor->finishedAnimActionParam = findFunctionPointer(ACTION_FINISHED_WALKING, funcPtr);
 	}
+	trace("walk actor=%d to %d,%d param=%d %s", actorIndex, destX, destY,
+		success && funcPtr ? actor->finishedAnimActionParam : 0, success ? "ok" : "refused");
 }
 
 void Room::loadMapFile(const Common::String &name) {
@@ -507,18 +565,23 @@ Common::Point Room::getActorPos(int actorIndex) {
 }
 
 int16 Room::getRandomWordInRange(int start, int end) {
-	return _vm->getRandomWord() % (end - start + 1) + start;
+	int16 value = _vm->getRandomWord() % (end - start + 1) + start;
+	trace("random %d-%d -> %d", start, end, value);
+	return value;
 }
 
 void Room::playSoundEffectIndex(SoundEffects soundEffect) {
+	trace("sfx %d", soundEffect);
 	_vm->_sound->playSoundEffectIndex(soundEffect);
 }
 
 void Room::playMidiMusicTracks(MidiTracks startTrack, MidiLoopType loopType) {
+	trace("music %d loop %d", startTrack, loopType);
 	_vm->_sound->playMidiMusicTracks(startTrack, loopType);
 }
 
 void Room::endMission(int16 score, int16 arg1, int16 arg2) {
+	trace("endmission %d %d %d", score, arg1, arg2);
 	_vm->_awayMission.disableInput = true;
 
 	for (int i = 0; i < (_vm->_awayMission.redshirtDead ? 3 : 4); i++) {
@@ -559,6 +622,7 @@ void Room::endMission(int16 score, int16 arg1, int16 arg2) {
 }
 
 void Room::showGameOverMenu() { // TODO: takes an optional parameter?
+	trace("gameover");
 	_vm->showGameOverMenu();
 	// TODO: finish. Shouldn't do this within a room due to deletion of current room?
 }
@@ -587,10 +651,12 @@ void Room::showRepublicMap(int16 arg0, int16 arg2) {
 }
 
 void Room::playVoc(Common::String filename) {
+	trace("voc %s", filename.c_str());
 	_vm->_sound->playVoc(filename);
 }
 
 void Room::stopAllVocSounds() {
+	trace("stopvocs");
 	_vm->_sound->stopAllVocSounds();
 }
 

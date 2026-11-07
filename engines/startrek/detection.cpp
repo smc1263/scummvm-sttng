@@ -32,6 +32,7 @@
 static const PlainGameDescriptor starTrekGames[] = {
 	{"st25", "Star Trek: 25th Anniversary"},
 	{"stjr", "Star Trek: Judgment Rites"},
+	{"sttng", "Star Trek: The Next Generation - The Custodian Archive"},
 	{0, 0}
 };
 
@@ -365,6 +366,20 @@ static const StarTrekGameDescription gameDescriptions[] = {
 		},
 		GType_STJR,
 		0
+	},
+
+	{ // The Custodian Archive (fan game). Detected by its STTNG.ID file, whatever its contents.
+		{
+			"sttng",
+			"",
+			AD_ENTRY1s("sttng.id", nullptr, AD_NO_SIZE),
+			Common::EN_ANY,
+			Common::kPlatformDOS,
+			ADGF_CD | ADGF_UNSTABLE,
+			GUIO2(GUIO_RENDERVGA, GUIO_NOSPEECH)
+		},
+		GType_STTNG,
+		GF_CDROM
 	},
 
 	{ AD_TABLE_END_MARKER, 0, 0 }

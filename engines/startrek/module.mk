@@ -17,6 +17,7 @@ MODULE_OBJS = \
 	resource.o \
 	metaengine.o \
 	room.o \
+	roomscript.o \
 	saveload.o \
 	sound.o \
 	space.o \

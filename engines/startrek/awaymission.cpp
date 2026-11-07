@@ -77,6 +77,7 @@ void StarTrekEngine::loadRoom(const Common::String &missionName, int roomIndex) 
 
 	_missionName = _missionToLoad;
 	_roomIndex = roomIndex;
+	_scriptRoomVars.clear();
 
 	_roomFrameCounter = 0;
 	_awayMission.disableInput = false;

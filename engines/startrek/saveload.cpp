@@ -74,9 +74,16 @@ bool StarTrekEngine::showLoadMenu() {
 	return loadGame(slot);
 }
 
-const uint32 CURRENT_SAVEGAME_VERSION = 1;
+// 2: adds the state of room scripts (flags and room vars)
+const uint32 CURRENT_SAVEGAME_VERSION = 2;
 
 bool StarTrekEngine::saveGame(int slot, Common::String desc) {
+	// A script paused in walk_wait/anim_wait can't be saved: its Lua state isn't serialized.
+	if (_gameMode == GAMEMODE_AWAYMISSION && _room && _room->isScriptBusy()) {
+		warning("Can't save while a room script is in the middle of a sequence");
+		return false;
+	}
+
 	Common::String filename = getSavegameFilename(slot);
 	Common::OutSaveFile *out;
 
@@ -163,6 +170,28 @@ bool StarTrekEngine::loadGame(int slot) {
 	}
 
 	return true;
+}
+
+static void syncScriptState(Common::Serializer &ser, Common::HashMap<Common::String, int32> &values) {
+	uint32 count = values.size();
+	ser.syncAsUint32LE(count);
+	if (ser.isLoading()) {
+		values.clear();
+		for (uint32 i = 0; i < count; i++) {
+			Common::String key;
+			int32 value = 0;
+			ser.syncString(key);
+			ser.syncAsSint32LE(value);
+			values[key] = value;
+		}
+	} else {
+		for (Common::HashMap<Common::String, int32>::iterator it = values.begin(); it != values.end(); ++it) {
+			Common::String key = it->_key;
+			int32 value = it->_value;
+			ser.syncString(key);
+			ser.syncAsSint32LE(value);
+		}
+	}
 }
 
 bool StarTrekEngine::saveOrLoadGameData(Common::SeekableReadStream *in, Common::WriteStream *out, SavegameMetadata *meta) {
@@ -406,6 +435,12 @@ bool StarTrekEngine::saveOrLoadGameData(Common::SeekableReadStream *in, Common::
 		}
 
 		ser.syncAsSint16LE(_warpHotspotsActive);
+	}
+
+	if (meta->version >= 2) {
+		syncScriptState(ser, _scriptFlags);
+		if (_gameMode == GAMEMODE_AWAYMISSION)
+			syncScriptState(ser, _scriptRoomVars);
 	}
 
 	return true;

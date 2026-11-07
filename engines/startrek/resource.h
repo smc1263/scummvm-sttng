@@ -53,7 +53,8 @@ struct ResourceIndex {
 
 class Resource {
 public:
-	Resource(Common::Platform platform, bool isDemo);
+	/** Without archiveRequired, a missing DATA.DIR means loose files only. */
+	Resource(Common::Platform platform, bool isDemo, bool archiveRequired = true);
 	virtual ~Resource();
 
 	Common::List<ResourceIndex> searchIndex(Common::String filename);
@@ -88,6 +89,7 @@ private:
 	Common::MacResManager *_macResFork;
 	Common::Platform _platform;
 	bool _isDemo;
+	bool _archiveRequired;
 	Common::String _txtFilename;
 	//Common::List<ResourceIndex> _resources;
 };
