@@ -119,6 +119,8 @@ public:
 
 	/** True while a room script is waiting for a walk or animation to finish. */
 	bool isScriptBusy() const;
+	/** True while a room script is waiting on a crew member, which locks player input. */
+	bool scriptLocksInput() const;
 
 	uint16 getFirstHotspot() {
 		return readRdfWord(0x12);

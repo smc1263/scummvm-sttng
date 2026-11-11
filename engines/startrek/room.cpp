@@ -206,6 +206,10 @@ bool Room::isScriptBusy() const {
 	return _script && _script->isBusy();
 }
 
+bool Room::scriptLocksInput() const {
+	return _script && _script->locksInput();
+}
+
 bool Room::handleAction(int8 type, byte b1, byte b2, byte b3) {
 	const Action a = {type, b1, b2, b3, 0};
 	return handleAction(a);
@@ -601,6 +605,10 @@ void Room::endMission(int16 score, int16 arg1, int16 arg2) {
 		_vm->handleAwayMissionEvents();
 
 	_vm->_awayMission.disableInput = false;
+	if (_vm->getGameType() == GType_STTNG) {
+		_vm->endSttngMission(score);
+		return;
+	}
 	_vm->_roomIndexToLoad = 0;
 	_vm->_gameMode = GAMEMODE_BEAMUP;
 

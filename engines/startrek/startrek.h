@@ -783,6 +783,14 @@ public:
 
 	int setupAutotest(bool resuming); // Returns the game mode to start in, or -1
 	void readSttngStart();
+	void endSttngMission(int16 score);
+	/** Input is off while the room says so or a room script waits on a crew member. */
+	bool isAwayInputDisabled() const;
+
+	// sttng: where end_mission continues (STTNG.ID after_mission=, default the start room)
+	Common::String _sttngAfterMission;
+	int _sttngAfterMissionRoom;
+	bool _sttngMissionEnded;
 	void runAutotestTick();
 	void finishAutotest(const char *reason);
 
