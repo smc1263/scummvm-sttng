@@ -441,6 +441,10 @@ bool StarTrekEngine::saveOrLoadGameData(Common::SeekableReadStream *in, Common::
 		syncScriptState(ser, _scriptFlags);
 		if (_gameMode == GAMEMODE_AWAYMISSION)
 			syncScriptState(ser, _scriptRoomVars);
+	} else if (ser.isLoading()) {
+		// Older saves carry no script state: don't keep this session's.
+		_scriptFlags.clear();
+		_scriptRoomVars.clear();
 	}
 
 	return true;

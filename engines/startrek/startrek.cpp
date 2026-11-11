@@ -99,6 +99,9 @@ StarTrekEngine::StarTrekEngine(OSystem *syst, const StarTrekGameDescription *gam
 	_mapFile = nullptr;
 	_iwFile = nullptr;
 
+	_sttngAfterMissionRoom = 0;
+	_sttngMissionEnded = false;
+
 	_autotestTicks = -1;
 	_autotestStartTick = 0;
 	_autotestLastDismissTick = 0;
@@ -232,27 +235,55 @@ static bool autotestErrorHandler(const char *msg) {
 	return false;
 }
 
+static bool parseSttngRoom(const Common::String &line, const char *key, Common::String &mission, int &room) {
+	if (!line.hasPrefix(key))
+		return false;
+	Common::String spec(line.c_str() + strlen(key));
+	int colon = spec.findFirstOf(':');
+	if (colon <= 0)
+		error("STTNG.ID: %s must be followed by MISSION:INDEX, got '%s'", key, spec.c_str());
+	mission = Common::String(spec.c_str(), colon);
+	mission.toUppercase();
+	room = atoi(spec.c_str() + colon + 1);
+	return true;
+}
+
 void StarTrekEngine::readSttngStart() {
-	// STTNG.ID: one key=value per line. start=MISSION:INDEX names the first room.
+	// STTNG.ID: one key=value per line.
+	//   start=MISSION:INDEX          the first room
+	//   after_mission=MISSION:INDEX  where end_mission continues (default: the first room)
 	Common::File file;
 	if (!file.open("sttng.id"))
 		error("Couldn't open STTNG.ID");
+	bool haveStart = false, haveAfter = false;
 	while (!file.eos()) {
 		Common::String line = file.readLine();
 		line.trim();
-		if (!line.hasPrefix("start="))
-			continue;
-		Common::String spec(line.c_str() + 6);
-		int colon = spec.findFirstOf(':');
-		if (colon <= 0)
-			error("STTNG.ID: start must look like MISSION:INDEX, got '%s'", spec.c_str());
-		_missionToLoad = Common::String(spec.c_str(), colon);
-		_missionToLoad.toUppercase();
-		_roomIndexToLoad = atoi(spec.c_str() + colon + 1);
-		_bridgeSequenceToLoad = -1;
-		return;
+		haveStart |= parseSttngRoom(line, "start=", _missionToLoad, _roomIndexToLoad);
+		haveAfter |= parseSttngRoom(line, "after_mission=", _sttngAfterMission, _sttngAfterMissionRoom);
 	}
-	error("STTNG.ID has no start= line");
+	if (!haveStart)
+		error("STTNG.ID has no start= line");
+	if (!haveAfter) {
+		_sttngAfterMission = _missionToLoad;
+		_sttngAfterMissionRoom = _roomIndexToLoad;
+	}
+	_bridgeSequenceToLoad = -1;
+}
+
+void StarTrekEngine::endSttngMission(int16 score) {
+	// sttng games have no ST25 bridge to return to (ADR 0003). The score is left in the flag
+	// score.<mission> and the game continues in the after_mission room, whose script decides
+	// what comes next. Called from room code, so the room is only replaced once the handler
+	// has returned: see runGameMode().
+	Common::String flag = "score." + _missionName;
+	flag.toLowercase();
+	_scriptFlags[flag] = score;
+	_missionToLoad = _sttngAfterMission;
+	_roomIndexToLoad = _sttngAfterMissionRoom;
+	_spawnIndexToLoad = -1;
+	_sttngMissionEnded = true;
+	_resetGameMode = true; // leave runAwayMission()
 }
 
 int StarTrekEngine::setupAutotest(bool resuming) {
@@ -346,10 +377,12 @@ void StarTrekEngine::runAutotestTick() {
 	if (!_autotestWalks.empty() && elapsed >= _autotestWalks.front().tick && _gameMode == GAMEMODE_AWAYMISSION) {
 		AutotestWalk walk = _autotestWalks.front();
 		_autotestWalks.pop_front();
-		bool started = actorWalkToPosition(OBJECT_KIRK, getCrewmanAnimFilename(OBJECT_KIRK, "walk"),
+		// Like a click, it does nothing while a room script holds the input lock.
+		bool locked = _room && _room->scriptLocksInput();
+		bool started = !locked && actorWalkToPosition(OBJECT_KIRK, getCrewmanAnimFilename(OBJECT_KIRK, "walk"),
 			_kirkActor->pos.x, _kirkActor->pos.y, walk.x, walk.y);
 		_system->logMessage(LogMessageType::kInfo, Common::String::format("AUTOTEST: walk to (%d,%d) %s\n",
-			walk.x, walk.y, started ? "started" : "refused").c_str());
+			walk.x, walk.y, locked ? "ignored" : started ? "started" : "refused").c_str());
 	}
 
 	if (!_autotestActions.empty() && elapsed >= _autotestActions.front().tick && _gameMode == GAMEMODE_AWAYMISSION
@@ -451,6 +484,12 @@ Common::Error StarTrekEngine::runGameMode(int mode, bool resume) {
 			_resetGameMode = false;
 		}
 		TrekEvent event;
+
+		if (_sttngMissionEnded) {
+			_sttngMissionEnded = false;
+			unloadRoom();
+			_lastGameMode = -1; // start the away mission again, in the room to load
+		}
 
 		if (_gameMode != _lastGameMode) {
 			// Cleanup previous game mode

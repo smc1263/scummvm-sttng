@@ -68,6 +68,10 @@ void StarTrekEngine::runAwayMission() {
 	}
 }
 
+bool StarTrekEngine::isAwayInputDisabled() const {
+	return _awayMission.disableInput || (_room && _room->scriptLocksInput());
+}
+
 void StarTrekEngine::cleanupAwayMission() {
 	// TODO
 }
@@ -213,7 +217,7 @@ void StarTrekEngine::handleAwayMissionEvents() {
 			break;
 
 		case TREKEVENT_KEYDOWN:
-			if (_awayMission.disableInput)
+			if (isAwayInputDisabled())
 				break;
 
 			switch (event.kbd.keycode) {
@@ -317,7 +321,7 @@ void StarTrekEngine::handleAwayMissionEvents() {
 }
 
 void StarTrekEngine::awayMissionLeftClick() {
-	if (_awayMission.disableInput)
+	if (isAwayInputDisabled())
 		return;
 
 	switch (_awayMission.activeAction) {
@@ -398,7 +402,7 @@ void StarTrekEngine::awayMissionLeftClick() {
 
 void StarTrekEngine::awayMissionSelectAction(bool openActionMenu) {
 	if (openActionMenu) {
-		if (_awayMission.disableInput)
+		if (isAwayInputDisabled())
 			return;
 		hideInventoryIcons();
 		_sound->playSoundEffectIndex(kSfxButton);

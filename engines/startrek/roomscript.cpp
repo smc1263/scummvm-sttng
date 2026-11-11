@@ -40,6 +40,10 @@ static const char *const SCRIPT_REGISTRY_KEY = "startrek_roomscript";
 static const byte FIRST_WAIT_TOKEN = 0x80;
 static const byte LAST_WAIT_TOKEN = 0xdf;
 
+static bool isCrew(int actorIndex) {
+	return actorIndex >= OBJECT_KIRK && actorIndex <= OBJECT_REDSHIRT;
+}
+
 struct NamedValue {
 	const char *name;
 	int value;
@@ -168,7 +172,12 @@ bool RoomScript::isEnabled(StarTrekEngine *vm) {
 }
 
 RoomScript::RoomScript(Room *room, const Common::String &name, const char *source, uint32 size)
-	: _room(room), _name(name), _L(nullptr), _nextToken(FIRST_WAIT_TOKEN), _pendingToken(-1) {
+	: _room(room), _name(name), _L(nullptr), _inputLocks(0), _nextToken(FIRST_WAIT_TOKEN), _pendingToken(-1),
+	_pendingActor(-1) {
+	// Scripts are source text only: precompiled chunks bypass Lua's checks.
+	if (size > 0 && source[0] == LUA_SIGNATURE[0])
+		error("Room script %s: precompiled Lua is not accepted", name.c_str());
+
 	_L = luaL_newstate();
 
 	// Only the side-effect-free libraries: no io, os or package access from room scripts.
@@ -255,14 +264,17 @@ bool RoomScript::actionHasCode(const Action &action, bool bitmask) {
 bool RoomScript::handleAction(const Action &action, bool bitmask) {
 	// A walk or animation started by walk_wait/anim_wait finished: continue that handler.
 	if (action.type == ACTION_FINISHED_WALKING || action.type == ACTION_FINISHED_ANIMATION) {
-		Common::HashMap<uint32, int>::iterator it = _waiting.find(action.b1);
+		Common::HashMap<uint32, Wait>::iterator it = _waiting.find(action.b1);
 		if (it != _waiting.end()) {
-			int threadRef = it->_value;
+			int threadRef = it->_value.threadRef;
+			if (isCrew(it->_value.actor))
+				_inputLocks--;
 			_waiting.erase(it);
 			lua_rawgeti(_L, LUA_REGISTRYINDEX, threadRef);
 			lua_State *thread = lua_tothread(_L, -1);
 			lua_pop(_L, 1);
-			resume(threadRef, thread);
+			lua_pushboolean(thread, true); // what walk_wait/anim_wait return
+			resume(threadRef, thread, 1);
 			return true;
 		}
 	}
@@ -284,16 +296,21 @@ void RoomScript::runHandler(int functionRef) {
 	lua_State *thread = lua_newthread(_L);
 	int threadRef = luaL_ref(_L, LUA_REGISTRYINDEX);
 	lua_rawgeti(thread, LUA_REGISTRYINDEX, functionRef);
-	resume(threadRef, thread);
+	resume(threadRef, thread, 0);
 }
 
-void RoomScript::resume(int threadRef, lua_State *thread) {
+void RoomScript::resume(int threadRef, lua_State *thread, int nargs) {
 	_pendingToken = -1;
-	int status = lua_resume(thread, 0);
+	int status = lua_resume(thread, nargs);
 	if (status == LUA_YIELD) {
 		if (_pendingToken < 0)
 			error("Room script %s: a handler yielded without waiting on anything", _name.c_str());
-		_waiting[_pendingToken] = threadRef;
+		Wait wait;
+		wait.threadRef = threadRef;
+		wait.actor = _pendingActor;
+		if (isCrew(wait.actor))
+			_inputLocks++;
+		_waiting[_pendingToken] = wait;
 	} else if (status == 0) {
 		luaL_unref(_L, LUA_REGISTRYINDEX, threadRef);
 	} else {
@@ -309,6 +326,24 @@ byte RoomScript::allocateToken() {
 			return token;
 	}
 	error("Room script %s: too many handlers waiting at once", _name.c_str());
+}
+
+// Pause the calling handler until the engine reports `token`. A player click would walk
+// the lead away and replace what a crew member is doing, and the token would never
+// arrive, so waiting on a crew member locks input until it does.
+int RoomScript::waitFor(lua_State *L, byte token, int actorIndex) {
+	_pendingToken = token;
+	_pendingActor = actorIndex;
+	return lua_yield(L, 0);
+}
+
+// A new walk or animation replaces the actor's current one, whose token would then never
+// arrive: the waiting handler would be stranded, and with it saving and the input lock.
+void RoomScript::checkNotAwaited(lua_State *L, int actorIndex) const {
+	for (Common::HashMap<uint32, Wait>::const_iterator it = _waiting.begin(); it != _waiting.end(); ++it) {
+		if (it->_value.actor == actorIndex)
+			luaL_error(L, "actor %d is still in another handler's walk_wait or anim_wait", actorIndex);
+	}
 }
 
 // ---------------------------------------------------------------- Lua API
@@ -376,17 +411,20 @@ int RoomScript::luaDescribe(lua_State *L) {
 }
 
 int RoomScript::luaLoadAnim(lua_State *L) {
+	fromState(L)->checkNotAwaited(L, luaL_checkinteger(L, 1));
 	fromState(L)->_room->loadActorAnim(luaL_checkinteger(L, 1), luaL_checkstring(L, 2),
 		luaL_optinteger(L, 3, -1), luaL_optinteger(L, 4, -1), luaL_optinteger(L, 5, 0));
 	return 0;
 }
 
 int RoomScript::luaLoadStandAnim(lua_State *L) {
+	fromState(L)->checkNotAwaited(L, luaL_checkinteger(L, 1));
 	fromState(L)->_room->loadActorStandAnim(luaL_checkinteger(L, 1));
 	return 0;
 }
 
 int RoomScript::luaWalk(lua_State *L) {
+	fromState(L)->checkNotAwaited(L, luaL_checkinteger(L, 1));
 	fromState(L)->_room->walkCrewman(luaL_checkinteger(L, 1), luaL_checkinteger(L, 2),
 		luaL_checkinteger(L, 3), luaL_optinteger(L, 4, 0));
 	return 0;
@@ -395,6 +433,8 @@ int RoomScript::luaWalk(lua_State *L) {
 int RoomScript::luaWalkWait(lua_State *L) {
 	RoomScript *s = fromState(L);
 	int actorIndex = luaL_checkinteger(L, 1);
+	luaL_argcheck(L, isCrew(actorIndex), 1, "crew member expected");
+	s->checkNotAwaited(L, actorIndex);
 	byte token = s->allocateToken();
 	s->_room->walkCrewman(actorIndex, luaL_checkinteger(L, 2), luaL_checkinteger(L, 3), token);
 
@@ -403,17 +443,17 @@ int RoomScript::luaWalkWait(lua_State *L) {
 		lua_pushboolean(L, false); // no path; nothing to wait for
 		return 1;
 	}
-	s->_pendingToken = token;
-	return lua_yield(L, 0);
+	return s->waitFor(L, token, actorIndex);
 }
 
 int RoomScript::luaAnimWait(lua_State *L) {
 	RoomScript *s = fromState(L);
+	int actorIndex = luaL_checkinteger(L, 1);
+	s->checkNotAwaited(L, actorIndex);
 	byte token = s->allocateToken();
-	s->_room->loadActorAnim(luaL_checkinteger(L, 1), luaL_checkstring(L, 2),
+	s->_room->loadActorAnim(actorIndex, luaL_checkstring(L, 2),
 		luaL_optinteger(L, 3, -1), luaL_optinteger(L, 4, -1), token);
-	s->_pendingToken = token;
-	return lua_yield(L, 0);
+	return s->waitFor(L, token, actorIndex);
 }
 
 int RoomScript::luaGiveItem(lua_State *L) {
@@ -499,9 +539,9 @@ int RoomScript::luaSetTimer(lua_State *L) {
 }
 
 int RoomScript::luaSetInput(lua_State *L) {
-	// set_input(true | false | "until_arrival"). Scripted sequences lock out the player like
-	// ST25 rooms do: a click would start a new walk for Kirk and cancel any walk_wait in
-	// progress. "until_arrival" unlocks by itself when the crew finishes walking.
+	// set_input(true | false | "until_arrival"). Locks the player out of a scripted sequence
+	// like ST25 rooms do. "until_arrival" unlocks by itself when the crew finishes walking.
+	// Waiting on a crew member locks input too, whatever is set here: see waitFor().
 	byte mode;
 	if (lua_type(L, 1) == LUA_TSTRING) {
 		luaL_argcheck(L, strcmp(lua_tostring(L, 1), "until_arrival") == 0, 1, "expected true, false or \"until_arrival\"");

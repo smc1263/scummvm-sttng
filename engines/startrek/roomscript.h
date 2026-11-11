@@ -52,6 +52,8 @@ public:
 	bool actionHasCode(const Action &action, bool bitmask);
 	bool handleAction(const Action &action, bool bitmask);
 	bool isBusy() const { return !_waiting.empty(); }
+	/** True while a handler waits on a crew walk or animation: the player can't act meanwhile. */
+	bool locksInput() const { return _inputLocks > 0; }
 
 private:
 	struct Handler {
@@ -63,13 +65,21 @@ private:
 	Common::String _name;
 	lua_State *_L;
 	Common::Array<Handler> _handlers;
-	Common::HashMap<uint32, int> _waiting; // completion token -> registry ref of the waiting coroutine
+	struct Wait {
+		int threadRef; // Lua registry reference to the waiting coroutine
+		int actor;     // whose walk or animation it waits for
+	};
+	Common::HashMap<uint32, Wait> _waiting; // completion token -> waiting coroutine
+	int _inputLocks; // entries of _waiting whose actor is a crew member, see locksInput()
 	byte _nextToken;
 	int _pendingToken; // set by walk_wait/anim_wait just before the coroutine yields
+	int _pendingActor;
 
 	static bool matches(const Handler &h, const Action &action, bool bitmask);
 	void runHandler(int functionRef);
-	void resume(int threadRef, lua_State *thread);
+	void resume(int threadRef, lua_State *thread, int nargs);
+	int waitFor(lua_State *L, byte token, int actorIndex);
+	void checkNotAwaited(lua_State *L, int actorIndex) const;
 	byte allocateToken();
 
 	static RoomScript *fromState(lua_State *L);
